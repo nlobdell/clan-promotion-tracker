@@ -31,6 +31,23 @@ public class WiseOldManClientTest
 		assertEquals(2, members.size());
 		assertEquals(12345L, members.get("someuser").getExp());
 		assertEquals(54321L, members.get("anotheruser").getExp());
+		assertEquals("Some_User", members.get("someuser").getLookupName());
+		assertEquals("Another-User", members.get("anotheruser").getLookupName());
+	}
+
+	@Test
+	public void parseGroupMembersPreservesCanonicalLookupNameForDisplayNamesWithSpaces()
+	{
+		String json = "{\n"
+			+ "  \"memberships\": [\n"
+			+ "    {\"player\": {\"username\": \"Name_With_Space\", \"displayName\": \"Name With Space\", \"exp\": 9999}}\n"
+			+ "  ]\n"
+			+ "}";
+
+		Map<String, WiseOldManClient.GroupMember> members = WiseOldManClient.parseGroupMembers(json);
+
+		assertEquals(1, members.size());
+		assertEquals("Name_With_Space", members.get("namewithspace").getLookupName());
 	}
 
 	@Test
@@ -59,6 +76,15 @@ public class WiseOldManClientTest
 		assertEquals(1000L, gains.getStartXp());
 		assertEquals(2000L, gains.getEndXp());
 		assertEquals(1000L, gains.getGainedXp());
+	}
+
+	@Test
+	public void normalizeNameRemovesWhitespaceSeparatorsAndPunctuation()
+	{
+		assertEquals(
+			"namewithspaces",
+			WiseOldManClient.normalizeName(" Name\u00A0With Spaces-_ ")
+		);
 	}
 
 	@Test

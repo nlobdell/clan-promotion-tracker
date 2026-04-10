@@ -23,6 +23,7 @@ import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.util.ImageUtil;
+import net.runelite.client.util.LinkBrowser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,6 +35,7 @@ import java.awt.datatransfer.StringSelection;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.lang.reflect.Type;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.LocalDate;
@@ -139,9 +141,11 @@ public class ClanPromotionTrackerPlugin extends Plugin
 	private volatile Map<String, Long> unresolvedBaselineCache = new ConcurrentHashMap<>();
 	private volatile List<ClanRosterMember> clanRosterCache = Collections.emptyList();
 	private volatile Map<String, WiseOldManClient.GroupMember> womGroupCache = Collections.emptyMap();
+	private volatile Map<String, WiseOldManClient.GroupMember> latestWomMembers = Collections.emptyMap();
 	private volatile int womGroupCacheId = -1;
 	private volatile long womGroupCacheExpiresAtMillis;
 	private volatile long womGroupCooldownUntilMillis;
+	private volatile long womGroupLastSuccessfulSyncMillis;
 	private volatile LocalDate lastNotificationDate;
 	private volatile long hydrationRunSequence;
 	private volatile HydrationRun activeHydrationRun;
@@ -166,8 +170,10 @@ public class ClanPromotionTrackerPlugin extends Plugin
 			this::savePrettyReportToFile,
 			this::exportCacheToFile,
 			this::importCacheFromFile,
-			this::ignoreUserFromPanel
+			this::ignoreUserFromPanel,
+			this::openWomProfileFromPanel
 		);
+		panel.setWomContext(config.womGroupId(), womGroupLastSuccessfulSyncMillis, womGroupCooldownUntilMillis, "WOM group cooldown");
 
 		navigationButton = NavigationButton.builder()
 			.tooltip("Clan Promotion Tracker")
@@ -216,6 +222,7 @@ public class ClanPromotionTrackerPlugin extends Plugin
 		actionableTargetRanks = Collections.emptyMap();
 		actionableCurrentRanks = Collections.emptyMap();
 		allRecords = Collections.emptyList();
+		latestWomMembers = Collections.emptyMap();
 	}
 
 	@Subscribe
@@ -845,8 +852,15 @@ public class ClanPromotionTrackerPlugin extends Plugin
 			runSnapshot = run;
 		}
 
+		String lookupUsername = task.member.username;
+		WiseOldManClient.GroupMember womMember = runSnapshot.womMembers.get(WiseOldManClient.normalizeName(task.member.username));
+		if (womMember != null && womMember.getLookupName() != null && !womMember.getLookupName().isBlank())
+		{
+			lookupUsername = womMember.getLookupName();
+		}
+
 		WiseOldManClient.BaselineResponse response = wiseOldManClient.fetchBaselineWithMeta(
-			task.member.username,
+			lookupUsername,
 			task.member.joinDate,
 			runSnapshot.today,
 			runSnapshot.womApiKey
@@ -1041,6 +1055,10 @@ public class ClanPromotionTrackerPlugin extends Plugin
 		List<PromotionRecord> visibleRecords;
 		List<PromotionRecord> displayRecords;
 		String infoText;
+		int womGroupId;
+		long womLastSyncMillis;
+		long cooldownUntilMillis;
+		String cooldownReason;
 
 		synchronized (hydrationLock)
 		{
@@ -1070,9 +1088,14 @@ public class ClanPromotionTrackerPlugin extends Plugin
 			allRecords = Collections.unmodifiableList(new ArrayList<>(computed));
 			actionableTargetRanks = Collections.unmodifiableMap(actionable);
 			actionableCurrentRanks = Collections.unmodifiableMap(actionableCurrent);
+			latestWomMembers = run.womMembers;
+			womGroupId = run.womGroupId;
+			womLastSyncMillis = womGroupLastSuccessfulSyncMillis;
+			cooldownUntilMillis = run.cooldownUntilMillis;
+			cooldownReason = run.cooldownReason;
 		}
 
-		updateResults(displayRecords, infoText);
+		updateResults(displayRecords, infoText, womGroupId, womLastSyncMillis, cooldownUntilMillis, cooldownReason);
 		notifyActionableMembers(visibleRecords);
 	}
 
@@ -1199,6 +1222,7 @@ public class ClanPromotionTrackerPlugin extends Plugin
 			womGroupCache = Collections.emptyMap();
 			womGroupCacheExpiresAtMillis = 0L;
 			womGroupCooldownUntilMillis = 0L;
+			womGroupLastSuccessfulSyncMillis = 0L;
 		}
 
 		if (!womGroupCache.isEmpty() && now < womGroupCacheExpiresAtMillis)
@@ -1249,6 +1273,7 @@ public class ClanPromotionTrackerPlugin extends Plugin
 			womGroupCache = Collections.unmodifiableMap(new HashMap<>(fetched));
 			womGroupCacheExpiresAtMillis = now + TimeUnit.SECONDS.toMillis(WOM_GROUP_CACHE_TTL_SECONDS);
 			womGroupCooldownUntilMillis = 0L;
+			womGroupLastSuccessfulSyncMillis = now;
 			return GroupMembersResult.available(womGroupCache, null, response.getRateLimitMeta());
 		}
 		catch (WiseOldManClient.RateLimitException ex)
@@ -1619,30 +1644,59 @@ public class ClanPromotionTrackerPlugin extends Plugin
 
 	private String buildSummary(List<PromotionRecord> all, List<PromotionRecord> visible, String refreshNote, String hydrationNote)
 	{
-		long readyCount = visible.stream().filter(record -> record.getStatus() == PromotionStatus.READY).count();
-		long approximateCount = visible.stream().filter(record -> record.getStatus() == PromotionStatus.APPROXIMATE_BASELINE).count();
-		long missingCount = visible.stream().filter(record ->
-			record.getStatus() == PromotionStatus.NO_WOM_MATCH
-				|| record.getStatus() == PromotionStatus.XP_NOT_FETCHED
-				|| record.getStatus() == PromotionStatus.UNKNOWN_RANK).count();
-
-		String summary = String.format(
-			Locale.ENGLISH,
-			"Ready: %d | Approx: %d | Missing: %d | Visible: %d/%d",
-			readyCount,
-			approximateCount,
-			missingCount,
-			visible.size(),
-			all.size());
+		String summary = buildStatusSummary(visible, all == null ? 0 : all.size());
 
 		String combined = refreshNote == null || refreshNote.isBlank() ? summary : refreshNote + " | " + summary;
 		return hydrationNote == null || hydrationNote.isBlank() ? combined : combined + " | " + hydrationNote;
 	}
 
+	static String buildStatusSummary(List<PromotionRecord> visible, int totalMembers)
+	{
+		List<PromotionRecord> safeVisible = visible == null ? Collections.emptyList() : visible;
+		long readyCount = safeVisible.stream().filter(record -> record.getStatus() == PromotionStatus.READY).count();
+		long approximateCount = safeVisible.stream().filter(record -> record.getStatus() == PromotionStatus.APPROXIMATE_BASELINE).count();
+		long notReadyCount = safeVisible.stream().filter(record -> record.getStatus() == PromotionStatus.NOT_READY).count();
+		long xpPendingCount = safeVisible.stream().filter(record -> record.getStatus() == PromotionStatus.XP_NOT_FETCHED).count();
+		long noWomMatchCount = safeVisible.stream().filter(record -> record.getStatus() == PromotionStatus.NO_WOM_MATCH).count();
+		long unknownRankCount = safeVisible.stream().filter(record -> record.getStatus() == PromotionStatus.UNKNOWN_RANK).count();
+
+		return String.format(
+			Locale.ENGLISH,
+			"Ready: %d | Approx: %d | Not ready: %d | XP pending: %d | Not in WOM group: %d | Unknown rank: %d | Visible: %d/%d",
+			readyCount,
+			approximateCount,
+			notReadyCount,
+			xpPendingCount,
+			noWomMatchCount,
+			unknownRankCount,
+			safeVisible.size(),
+			Math.max(0, totalMembers)
+		);
+	}
+
 	private void updateResults(List<PromotionRecord> visibleRecords, String infoText)
+	{
+		updateResults(
+			visibleRecords,
+			infoText,
+			config.womGroupId(),
+			womGroupLastSuccessfulSyncMillis,
+			womGroupCooldownUntilMillis,
+			"WOM group cooldown"
+		);
+	}
+
+	private void updateResults(
+		List<PromotionRecord> visibleRecords,
+		String infoText,
+		int womGroupId,
+		long womLastSyncMillis,
+		long cooldownUntilMillis,
+		String cooldownReason)
 	{
 		if (panel != null)
 		{
+			panel.setWomContext(womGroupId, womLastSyncMillis, cooldownUntilMillis, cooldownReason);
 			panel.setInfoText(infoText);
 			panel.setRecords(visibleRecords, config.maxDisplayedInPanel());
 		}
@@ -1652,6 +1706,7 @@ public class ClanPromotionTrackerPlugin extends Plugin
 	{
 		if (panel != null)
 		{
+			panel.setWomContext(config.womGroupId(), womGroupLastSuccessfulSyncMillis, womGroupCooldownUntilMillis, "WOM group cooldown");
 			panel.setInfoText(infoText);
 		}
 	}
@@ -1945,6 +2000,88 @@ public class ClanPromotionTrackerPlugin extends Plugin
 			ignoredUsers.add(username);
 			configManager.setConfiguration(CONFIG_GROUP, "ignoredUsers", String.join(", ", ignoredUsers));
 		}
+	}
+
+	private void openWomProfileFromPanel(PromotionRecord record)
+	{
+		if (record == null)
+		{
+			return;
+		}
+
+		Map<String, WiseOldManClient.GroupMember> womMembers = latestWomMembers;
+		if (womMembers == null || womMembers.isEmpty())
+		{
+			womMembers = womGroupCache;
+		}
+
+		String lookupUsername = resolveWomLookupUsername(record, womMembers);
+		if (lookupUsername.isBlank())
+		{
+			if (panel != null)
+			{
+				panel.setInfoText("Could not determine WOM lookup username for " + record.getUsername() + '.');
+			}
+			return;
+		}
+
+		String profileUrl = buildWomProfileUrl(lookupUsername);
+		if (profileUrl.isBlank())
+		{
+			if (panel != null)
+			{
+				panel.setInfoText("Could not build WOM profile URL for " + lookupUsername + '.');
+			}
+			return;
+		}
+
+		try
+		{
+			LinkBrowser.open(profileUrl);
+			if (panel != null)
+			{
+				panel.setInfoText("Opened WOM profile for " + lookupUsername + '.');
+			}
+		}
+		catch (RuntimeException ex)
+		{
+			LOG.warn("Failed to open WOM profile URL {}", profileUrl, ex);
+			if (panel != null)
+			{
+				panel.setInfoText("Could not open WOM profile for " + lookupUsername + '.');
+			}
+		}
+	}
+
+	static String resolveWomLookupUsername(PromotionRecord record, Map<String, WiseOldManClient.GroupMember> womMembers)
+	{
+		if (record == null)
+		{
+			return "";
+		}
+
+		if (womMembers != null && !womMembers.isEmpty())
+		{
+			WiseOldManClient.GroupMember womMember = womMembers.get(record.getNormalizedUsername());
+			if (womMember != null && womMember.getLookupName() != null && !womMember.getLookupName().isBlank())
+			{
+				return womMember.getLookupName().trim();
+			}
+		}
+
+		String username = record.getUsername();
+		return username == null ? "" : username.trim();
+	}
+
+	static String buildWomProfileUrl(String username)
+	{
+		if (username == null || username.isBlank())
+		{
+			return "";
+		}
+
+		String encodedUsername = URLEncoder.encode(username.trim(), StandardCharsets.UTF_8).replace("+", "%20");
+		return "https://wiseoldman.net/players/" + encodedUsername;
 	}
 
 	private void rescheduleAutoRefresh()

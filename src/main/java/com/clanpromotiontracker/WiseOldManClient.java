@@ -162,7 +162,8 @@ final class WiseOldManClient
 				continue;
 			}
 
-			GroupMember groupMember = new GroupMember(currentName, getAsLong(player, "exp"));
+			String lookupName = username.isBlank() ? currentName : username;
+			GroupMember groupMember = new GroupMember(currentName, lookupName, getAsLong(player, "exp"));
 			members.put(normalizeName(currentName), groupMember);
 			if (!username.isBlank())
 			{
@@ -273,12 +274,12 @@ final class WiseOldManClient
 			return "";
 		}
 
-		return name
-			.toLowerCase(Locale.ENGLISH)
-			.trim()
-			.replace(" ", "")
-			.replace("-", "")
-			.replace("_", "");
+		String lower = name.toLowerCase(Locale.ENGLISH).trim();
+		StringBuilder normalized = new StringBuilder(lower.length());
+		lower.codePoints()
+			.filter(Character::isLetterOrDigit)
+			.forEach(normalized::appendCodePoint);
+		return normalized.toString();
 	}
 
 	private ApiResult execute(Request request) throws IOException
@@ -439,17 +440,24 @@ final class WiseOldManClient
 	static final class GroupMember
 	{
 		private final String currentName;
+		private final String lookupName;
 		private final long exp;
 
-		GroupMember(String currentName, long exp)
+		GroupMember(String currentName, String lookupName, long exp)
 		{
 			this.currentName = currentName;
+			this.lookupName = lookupName;
 			this.exp = exp;
 		}
 
 		String getCurrentName()
 		{
 			return currentName;
+		}
+
+		String getLookupName()
+		{
+			return lookupName;
 		}
 
 		long getExp()

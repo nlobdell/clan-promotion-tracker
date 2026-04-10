@@ -43,13 +43,13 @@ final class PrettyExporter
 		builder.append("Not ready: ").append(notReadyCount).append('\n');
 		builder.append("XP not fetched: ").append(xpMissingCount).append('\n');
 		builder.append("Unknown rank: ").append(unknownRankCount).append('\n');
-		builder.append("No WOM match: ").append(noWomMatchCount).append("\n\n");
+		builder.append("Not in WOM group: ").append(noWomMatchCount).append("\n\n");
 
 		appendSection(builder, "Promotion Recommendations", safeRecords, PromotionRecord::isActionable);
 		appendSection(builder, "Not Ready", safeRecords, record -> record.getStatus() == PromotionStatus.NOT_READY);
 		appendSection(builder, "XP Not Fetched", safeRecords, record -> record.getStatus() == PromotionStatus.XP_NOT_FETCHED);
 		appendSection(builder, "Unknown Rank", safeRecords, record -> record.getStatus() == PromotionStatus.UNKNOWN_RANK);
-		appendSection(builder, "No WOM Match", safeRecords, record -> record.getStatus() == PromotionStatus.NO_WOM_MATCH);
+		appendSection(builder, "Not In WOM Group", safeRecords, record -> record.getStatus() == PromotionStatus.NO_WOM_MATCH);
 		return builder.toString();
 	}
 
