@@ -33,17 +33,6 @@ $env:Path="$env:JAVA_HOME\bin;$env:Path"
 .\gradlew run
 ```
 
-## Authenticated Accounts
-
-If you use a Jagex Account and want the dev client to launch authenticated, use the helper scripts in [scripts](scripts):
-
-```powershell
-.\scripts\Setup-AuthenticatedDev.ps1
-.\scripts\Run-AuthenticatedDevClient.ps1
-```
-
-The first script opens the official `RuneLite (configure)` launcher entry and walks you through writing `.runelite\credentials.properties`. The second script runs this plugin repo with Java 11 and warns if that credential file is missing.
-
 ## Data and Privacy
 
 - This plugin sends clan member usernames and join-date-based Wise Old Man API queries to calculate promotion recommendations.
