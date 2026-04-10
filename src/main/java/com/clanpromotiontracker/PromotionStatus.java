@@ -6,7 +6,7 @@ enum PromotionStatus
 	NOT_READY("Not ready", false),
 	XP_NOT_FETCHED("XP not fetched", false),
 	UNKNOWN_RANK("Unknown rank", false),
-	NO_WOM_MATCH("No WOM match", false),
+	NO_WOM_MATCH("Not in WOM group", false),
 	APPROXIMATE_BASELINE("Approximate baseline", true);
 
 	private final String displayName;

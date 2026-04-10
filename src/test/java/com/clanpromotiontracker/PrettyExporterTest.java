@@ -57,4 +57,30 @@ public class PrettyExporterTest
 		assertTrue(markdown.contains("## XP Not Fetched"));
 		assertTrue(markdown.contains("| Warmholes | Sergeant | Lieutenant |"));
 	}
+
+	@Test
+	public void markdownUsesGroupMembershipWordingForNoWomMatchStatus()
+	{
+		PromotionRecord unmatched = new PromotionRecord(
+			"Baron groof",
+			"barongroof",
+			"Recruit",
+			LocalDate.of(2026, 1, 1),
+			3,
+			null,
+			null,
+			null,
+			null,
+			"Corporal",
+			PromotionStatus.NO_WOM_MATCH,
+			false
+		);
+
+		String markdown = PrettyExporter.toMarkdown(Arrays.asList(unmatched), ZonedDateTime.now(ZoneId.of("America/Los_Angeles")));
+
+		assertTrue(markdown.contains("Not in WOM group: 1"));
+		assertTrue(markdown.contains("## Not In WOM Group"));
+		assertTrue(markdown.contains("| Baron groof | Recruit | Corporal |"));
+		assertTrue(markdown.contains("Not in WOM group"));
+	}
 }
