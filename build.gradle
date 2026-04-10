@@ -40,6 +40,10 @@ tasks.withType(JavaCompile).configureEach {
 	options.release.set(11)
 }
 
+tasks.named('processResources') {
+	from(layout.projectDirectory.file('runelite-plugin.properties'))
+}
+
 tasks.register('run', JavaExec) {
 	classpath = sourceSets.test.runtimeClasspath
 	mainClass = pluginMainClass
